@@ -34,7 +34,12 @@ type Department = "HR" | "IT" | "Finance" | "Operations";
 async function generateGeminiText(system: string, prompt: string, jsonMode = false): Promise<string | null> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return null;
-  const model = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+  // Kept in sync with tickets.server.ts — Google has been retiring Gemini
+  // models faster than their published shutdown dates in 2026 (2.0 Flash,
+  // 1.5, 1.0 already gone; 2.5 Flash has been reported 404ing ahead of its
+  // official Oct 16 2026 date too). GEMINI_MODEL env var overrides this
+  // without a redeploy if Google moves the goalposts again.
+  const model = process.env.GEMINI_MODEL ?? "gemini-3.1-flash-lite";
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
     {
@@ -47,7 +52,13 @@ async function generateGeminiText(system: string, prompt: string, jsonMode = fal
       }),
     },
   );
-  if (!response.ok) return null;
+  if (!response.ok) {
+    // Log instead of silently falling back — otherwise a bad model name,
+    // expired key, or quota issue looks identical to "AI is just off".
+    const errText = await response.text().catch(() => "");
+    console.error(`Gemini API error ${response.status} for model "${model}" (analytics): ${errText}`);
+    return null;
+  }
   const payload = (await response.json()) as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
   };
